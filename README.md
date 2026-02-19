@@ -71,3 +71,29 @@
 ### Nota de enlace entre servicios en Render
 - Crea primero la base PostgreSQL en Render.
 - Luego, en el Web Service del backend, asigna `DATABASE_URL` con el valor del servicio Postgres.
+
+## Eventos de agregación en PostgreSQL (Render)
+- Script listo: `postgres_events.psql`
+- Este script crea funciones y jobs para llenar automáticamente:
+  - `sensor_history_1min`
+  - `sensor_history_5min`
+  - `sensor_history_10min`
+  - `sensor_history_1hour`
+
+### Cómo ejecutarlo
+1. Abre tu servicio PostgreSQL en Render.
+2. Entra a PostgreSQL Shell (o usa un cliente SQL).
+3. Ejecuta el contenido completo de `postgres_events.psql`.
+
+### Verificación rápida
+- Ver jobs:
+  - `SELECT jobid, jobname, schedule, active FROM cron.job WHERE jobname LIKE 'aggregate_sensor_data_%';`
+- Probar manual 1 minuto:
+  - `SELECT aggregate_sensor_data_1min();`
+
+## Alternativa sin privilegios en PostgreSQL
+- Si Render no permite crear `pg_cron`/extensiones con tu usuario, el backend ya puede llenar tablas agregadas automáticamente al iniciar.
+- Variable de entorno:
+  - `ENABLE_APP_AGGREGATION_JOBS=true` (por defecto activado)
+- Para desactivarlo y usar solo SQL jobs:
+  - `ENABLE_APP_AGGREGATION_JOBS=false`

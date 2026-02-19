@@ -28,7 +28,9 @@ const {
   getAggregated1min,
   getAggregated5min,
   getAggregated10min,
-  getAggregated1hour
+  getAggregated1hour,
+  startAggregationJobs,
+  stopAggregationJobs
 } = require('./database');
 
 // ========================================
@@ -38,6 +40,7 @@ const {
 const PORT = process.env.PORT || 3000;
 // Por defecto usar broker público de HiveMQ si no se define otro
 const MQTT_BROKER = process.env.MQTT_BROKER || 'mqtt://broker.hivemq.com:1883';
+const ENABLE_APP_AGGREGATION_JOBS = process.env.ENABLE_APP_AGGREGATION_JOBS !== 'false';
 
 const app = express();
 const server = http.createServer(app);
@@ -603,6 +606,13 @@ async function startServer() {
     await initConnectionPool();
     await initDatabase();
     console.log('[DB] PostgreSQL inicializado correctamente');
+
+    if (ENABLE_APP_AGGREGATION_JOBS) {
+      startAggregationJobs();
+      console.log('[DB] Jobs de agregación internos habilitados');
+    } else {
+      console.log('[DB] Jobs de agregación internos deshabilitados por configuración');
+    }
     
     // Intentar conectar a MQTT (no crítico si falla)
     try {
@@ -647,6 +657,7 @@ async function startServer() {
 // Manejo de cierre graceful
 process.on('SIGINT', () => {
   console.log('\n[SERVIDOR] Cerrando servidor...');
+  stopAggregationJobs();
   mqttHandler.disconnect();
   server.close(() => {
     console.log('[SERVIDOR] Servidor cerrado correctamente');

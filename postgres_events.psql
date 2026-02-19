@@ -1,0 +1,154 @@
+-- =====================================================================
+-- PostgreSQL Jobs para agregación de datos de sensores (Render Postgres)
+-- =====================================================================
+-- Requisitos:
+-- 1) Tablas base creadas (sensor_history, sensor_history_1min, _5min, _10min, _1hour)
+-- 2) Extensión pg_cron habilitada en la base
+--
+-- Ejecución:
+-- - Abre PostgreSQL Shell de Render y ejecuta este archivo completo.
+-- =====================================================================
+
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+
+-- =====================================================================
+-- Funciones de agregación
+-- =====================================================================
+
+CREATE OR REPLACE FUNCTION aggregate_sensor_data_1min()
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  INSERT INTO sensor_history_1min (sensor_id, minute_ts, avg_value, min_value, max_value, count)
+  SELECT
+    sensor_id,
+    date_trunc('minute', "timestamp") AS minute_ts,
+    AVG(value) AS avg_value,
+    MIN(value) AS min_value,
+    MAX(value) AS max_value,
+    COUNT(*)::int AS count
+  FROM sensor_history
+  WHERE "timestamp" >= now() - INTERVAL '2 minute'
+    AND "timestamp" < date_trunc('minute', now())
+  GROUP BY sensor_id, date_trunc('minute', "timestamp")
+  ON CONFLICT (sensor_id, minute_ts)
+  DO UPDATE SET
+    avg_value = EXCLUDED.avg_value,
+    min_value = EXCLUDED.min_value,
+    max_value = EXCLUDED.max_value,
+    count = EXCLUDED.count;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION aggregate_sensor_data_5min()
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  INSERT INTO sensor_history_5min (sensor_id, interval_ts, avg_value, min_value, max_value, count)
+  SELECT
+    sensor_id,
+    to_timestamp(floor(extract(epoch FROM "timestamp") / 300) * 300) AS interval_ts,
+    AVG(value) AS avg_value,
+    MIN(value) AS min_value,
+    MAX(value) AS max_value,
+    COUNT(*)::int AS count
+  FROM sensor_history
+  WHERE "timestamp" >= now() - INTERVAL '10 minute'
+    AND "timestamp" < to_timestamp(floor(extract(epoch FROM now()) / 300) * 300)
+  GROUP BY sensor_id, to_timestamp(floor(extract(epoch FROM "timestamp") / 300) * 300)
+  ON CONFLICT (sensor_id, interval_ts)
+  DO UPDATE SET
+    avg_value = EXCLUDED.avg_value,
+    min_value = EXCLUDED.min_value,
+    max_value = EXCLUDED.max_value,
+    count = EXCLUDED.count;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION aggregate_sensor_data_10min()
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  INSERT INTO sensor_history_10min (sensor_id, interval_ts, avg_value, min_value, max_value, count)
+  SELECT
+    sensor_id,
+    to_timestamp(floor(extract(epoch FROM "timestamp") / 600) * 600) AS interval_ts,
+    AVG(value) AS avg_value,
+    MIN(value) AS min_value,
+    MAX(value) AS max_value,
+    COUNT(*)::int AS count
+  FROM sensor_history
+  WHERE "timestamp" >= now() - INTERVAL '20 minute'
+    AND "timestamp" < to_timestamp(floor(extract(epoch FROM now()) / 600) * 600)
+  GROUP BY sensor_id, to_timestamp(floor(extract(epoch FROM "timestamp") / 600) * 600)
+  ON CONFLICT (sensor_id, interval_ts)
+  DO UPDATE SET
+    avg_value = EXCLUDED.avg_value,
+    min_value = EXCLUDED.min_value,
+    max_value = EXCLUDED.max_value,
+    count = EXCLUDED.count;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION aggregate_sensor_data_1hour()
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  INSERT INTO sensor_history_1hour (sensor_id, hour_ts, avg_value, min_value, max_value, count)
+  SELECT
+    sensor_id,
+    date_trunc('hour', "timestamp") AS hour_ts,
+    AVG(value) AS avg_value,
+    MIN(value) AS min_value,
+    MAX(value) AS max_value,
+    COUNT(*)::int AS count
+  FROM sensor_history
+  WHERE "timestamp" >= now() - INTERVAL '2 hour'
+    AND "timestamp" < date_trunc('hour', now())
+  GROUP BY sensor_id, date_trunc('hour', "timestamp")
+  ON CONFLICT (sensor_id, hour_ts)
+  DO UPDATE SET
+    avg_value = EXCLUDED.avg_value,
+    min_value = EXCLUDED.min_value,
+    max_value = EXCLUDED.max_value,
+    count = EXCLUDED.count;
+END;
+$$;
+
+-- =====================================================================
+-- Programación de jobs (equivalente a EVENT SCHEDULER de MySQL)
+-- =====================================================================
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'aggregate_sensor_data_1min') THEN
+    PERFORM cron.unschedule((SELECT jobid FROM cron.job WHERE jobname = 'aggregate_sensor_data_1min' LIMIT 1));
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'aggregate_sensor_data_5min') THEN
+    PERFORM cron.unschedule((SELECT jobid FROM cron.job WHERE jobname = 'aggregate_sensor_data_5min' LIMIT 1));
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'aggregate_sensor_data_10min') THEN
+    PERFORM cron.unschedule((SELECT jobid FROM cron.job WHERE jobname = 'aggregate_sensor_data_10min' LIMIT 1));
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'aggregate_sensor_data_1hour') THEN
+    PERFORM cron.unschedule((SELECT jobid FROM cron.job WHERE jobname = 'aggregate_sensor_data_1hour' LIMIT 1));
+  END IF;
+END;
+$$;
+
+SELECT cron.schedule('aggregate_sensor_data_1min', '*/1 * * * *', $$SELECT aggregate_sensor_data_1min();$$);
+SELECT cron.schedule('aggregate_sensor_data_5min', '*/5 * * * *', $$SELECT aggregate_sensor_data_5min();$$);
+SELECT cron.schedule('aggregate_sensor_data_10min', '*/10 * * * *', $$SELECT aggregate_sensor_data_10min();$$);
+SELECT cron.schedule('aggregate_sensor_data_1hour', '0 * * * *', $$SELECT aggregate_sensor_data_1hour();$$);
+
+SELECT jobid, jobname, schedule, command, active
+FROM cron.job
+WHERE jobname LIKE 'aggregate_sensor_data_%'
+ORDER BY jobname;

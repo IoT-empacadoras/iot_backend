@@ -1,0 +1,5 @@
+-- Archivo informativo para evitar errores del validador SQL del editor.
+--
+-- El script ejecutable de PostgreSQL está en: postgres_events.psql
+--
+-- Úsalo en Render PostgreSQL Shell para crear funciones y jobs (pg_cron).

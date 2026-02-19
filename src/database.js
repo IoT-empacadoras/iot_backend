@@ -34,6 +34,7 @@ console.log(`[DB] Base de datos: ${process.env.DATABASE_URL ? 'definida en DATAB
 console.log(`[DB] SSL: ${sslEnabled ? 'habilitado' : 'deshabilitado'}`);
 
 let pool;
+let aggregationTimers = [];
 
 async function initConnectionPool() {
   try {
@@ -668,6 +669,129 @@ async function getAggregated1hour(deviceId, limit = 24) {
   }
 }
 
+async function aggregate1min() {
+  await pool.query(`
+    INSERT INTO sensor_history_1min (sensor_id, minute_ts, avg_value, min_value, max_value, count)
+    SELECT
+      sensor_id,
+      date_trunc('minute', "timestamp") AS minute_ts,
+      AVG(value) AS avg_value,
+      MIN(value) AS min_value,
+      MAX(value) AS max_value,
+      COUNT(*)::int AS count
+    FROM sensor_history
+    WHERE "timestamp" >= now() - INTERVAL '2 minute'
+      AND "timestamp" < date_trunc('minute', now())
+    GROUP BY sensor_id, date_trunc('minute', "timestamp")
+    ON CONFLICT (sensor_id, minute_ts)
+    DO UPDATE SET
+      avg_value = EXCLUDED.avg_value,
+      min_value = EXCLUDED.min_value,
+      max_value = EXCLUDED.max_value,
+      count = EXCLUDED.count
+  `);
+}
+
+async function aggregate5min() {
+  await pool.query(`
+    INSERT INTO sensor_history_5min (sensor_id, interval_ts, avg_value, min_value, max_value, count)
+    SELECT
+      sensor_id,
+      to_timestamp(floor(extract(epoch FROM "timestamp") / 300) * 300) AS interval_ts,
+      AVG(value) AS avg_value,
+      MIN(value) AS min_value,
+      MAX(value) AS max_value,
+      COUNT(*)::int AS count
+    FROM sensor_history
+    WHERE "timestamp" >= now() - INTERVAL '10 minute'
+      AND "timestamp" < to_timestamp(floor(extract(epoch FROM now()) / 300) * 300)
+    GROUP BY sensor_id, to_timestamp(floor(extract(epoch FROM "timestamp") / 300) * 300)
+    ON CONFLICT (sensor_id, interval_ts)
+    DO UPDATE SET
+      avg_value = EXCLUDED.avg_value,
+      min_value = EXCLUDED.min_value,
+      max_value = EXCLUDED.max_value,
+      count = EXCLUDED.count
+  `);
+}
+
+async function aggregate10min() {
+  await pool.query(`
+    INSERT INTO sensor_history_10min (sensor_id, interval_ts, avg_value, min_value, max_value, count)
+    SELECT
+      sensor_id,
+      to_timestamp(floor(extract(epoch FROM "timestamp") / 600) * 600) AS interval_ts,
+      AVG(value) AS avg_value,
+      MIN(value) AS min_value,
+      MAX(value) AS max_value,
+      COUNT(*)::int AS count
+    FROM sensor_history
+    WHERE "timestamp" >= now() - INTERVAL '20 minute'
+      AND "timestamp" < to_timestamp(floor(extract(epoch FROM now()) / 600) * 600)
+    GROUP BY sensor_id, to_timestamp(floor(extract(epoch FROM "timestamp") / 600) * 600)
+    ON CONFLICT (sensor_id, interval_ts)
+    DO UPDATE SET
+      avg_value = EXCLUDED.avg_value,
+      min_value = EXCLUDED.min_value,
+      max_value = EXCLUDED.max_value,
+      count = EXCLUDED.count
+  `);
+}
+
+async function aggregate1hour() {
+  await pool.query(`
+    INSERT INTO sensor_history_1hour (sensor_id, hour_ts, avg_value, min_value, max_value, count)
+    SELECT
+      sensor_id,
+      date_trunc('hour', "timestamp") AS hour_ts,
+      AVG(value) AS avg_value,
+      MIN(value) AS min_value,
+      MAX(value) AS max_value,
+      COUNT(*)::int AS count
+    FROM sensor_history
+    WHERE "timestamp" >= now() - INTERVAL '2 hour'
+      AND "timestamp" < date_trunc('hour', now())
+    GROUP BY sensor_id, date_trunc('hour', "timestamp")
+    ON CONFLICT (sensor_id, hour_ts)
+    DO UPDATE SET
+      avg_value = EXCLUDED.avg_value,
+      min_value = EXCLUDED.min_value,
+      max_value = EXCLUDED.max_value,
+      count = EXCLUDED.count
+  `);
+}
+
+function createAggregationTimer(name, intervalMs, worker) {
+  const run = async () => {
+    try {
+      await worker();
+    } catch (error) {
+      console.error(`[ERROR] Job ${name} falló:`, error.message);
+    }
+  };
+
+  run();
+  const timer = setInterval(run, intervalMs);
+  aggregationTimers.push(timer);
+  console.log(`[DB] Job ${name} activo cada ${Math.round(intervalMs / 1000)}s`);
+}
+
+function startAggregationJobs() {
+  if (aggregationTimers.length > 0) {
+    return;
+  }
+
+  createAggregationTimer('aggregate_1min', 60 * 1000, aggregate1min);
+  createAggregationTimer('aggregate_5min', 5 * 60 * 1000, aggregate5min);
+  createAggregationTimer('aggregate_10min', 10 * 60 * 1000, aggregate10min);
+  createAggregationTimer('aggregate_1hour', 60 * 60 * 1000, aggregate1hour);
+}
+
+function stopAggregationJobs() {
+  aggregationTimers.forEach((timer) => clearInterval(timer));
+  aggregationTimers = [];
+}
+
 module.exports = {
   initConnectionPool,
   initDatabase,
@@ -687,5 +811,7 @@ module.exports = {
   getAggregated1min,
   getAggregated5min,
   getAggregated10min,
-  getAggregated1hour
+  getAggregated1hour,
+  startAggregationJobs,
+  stopAggregationJobs
 };
