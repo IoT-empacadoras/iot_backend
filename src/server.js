@@ -76,7 +76,7 @@ const mqttHandler = new XinjeMQTTHandler(MQTT_BROKER, {
 mqttHandler.subscribe((data) => {
   io.emit('xinje-data', data);
   
-  // Actualizar estado del dispositivo en MySQL
+  // Actualizar estado del dispositivo en PostgreSQL
   const deviceName = String(data.deviceId);
   
   saveOrUpdateDevice(data.deviceId, deviceName, 'HMI').catch((error) => {
@@ -98,6 +98,18 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     mqtt: mqttHandler.client ? 'connected' : 'disconnected'
+  });
+});
+
+/**
+ * GET /
+ * Información básica del servicio
+ */
+app.get('/', (req, res) => {
+  res.json({
+    service: 'Xinje IoT Backend',
+    status: 'running',
+    health: '/api/health'
   });
 });
 
@@ -586,11 +598,11 @@ app.use((error, req, res, next) => {
 
 async function startServer() {
   try {
-    // Inicializar MySQL
-    console.log('[DB] Inicializando conexión a MySQL...');
+    // Inicializar PostgreSQL
+    console.log('[DB] Inicializando conexión a PostgreSQL...');
     await initConnectionPool();
     await initDatabase();
-    console.log('[DB] MySQL inicializado correctamente');
+    console.log('[DB] PostgreSQL inicializado correctamente');
     
     // Intentar conectar a MQTT (no crítico si falla)
     try {
