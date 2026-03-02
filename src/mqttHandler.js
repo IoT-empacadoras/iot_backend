@@ -12,7 +12,7 @@
  */
 
 const mqtt = require('mqtt');
-const { saveData, saveConfig } = require('./database');
+const { saveData, saveConfig, saveMachineEvent } = require('./database');
 
 class XinjeMQTTHandler {
   constructor(brokerUrl, options = {}) {
@@ -76,10 +76,10 @@ class XinjeMQTTHandler {
    */
 
   subscribeToXinjeTopics() {
-    const targetDeviceId = '441095104B78F267112345678'; 
+    const targetDeviceId = '441095104B78F267112345678';
     const topics = [
-      `${targetDeviceId}/pub_data`,        // Solo datos de ESTE dispositivo
-      `${targetDeviceId}/write_reply`      // Solo respuestas de ESTE dispositivo
+      `${targetDeviceId}/events`,       // único tópico: telemetría + eventos
+      `${targetDeviceId}/write_reply`   // respuestas a comandos
     ];
     topics.forEach(topic => {
       this.client.subscribe(topic, { qos: 2 }, (err) => {
@@ -159,15 +159,29 @@ class XinjeMQTTHandler {
         case 'pub_configlist':
           this.handleConfigList(deviceId, payload);
           break;
-        
+
+        case 'events': {
+          // Diferenciar por message_type dentro del payload
+          const msgType = payload.message_type;
+          if (msgType === 'telemetry') {
+            this.handleTelemetry(deviceId, payload);
+          } else if (msgType === 'event') {
+            this.handleEvent(deviceId, payload);
+          } else {
+            // Compatibilidad con simulador antiguo (pub_data)
+            this.handleDataPublish(deviceId, payload);
+          }
+          break;
+        }
+
         case 'pub_data':
           this.handleDataPublish(deviceId, payload);
           break;
-        
+
         case 'write_reply':
           this.handleWriteReply(deviceId, payload);
           break;
-        
+
         default:
           console.log(`[INFO] Topic desconocido: ${topicType}`);
       }
@@ -189,7 +203,7 @@ class XinjeMQTTHandler {
   validateXinjePayload(payload) {
     if (!payload || typeof payload !== 'object') return false;
     if (!payload.Unix || !payload.Version) return false;
-    if (payload.Version !== 'V1.0') {
+    if (payload.Version !== 'V1.0' && payload.Version !== 'V2.0') {
       console.warn(`[WARN] Version de protocolo no reconocida: ${payload.Version}`);
     }
     return true;
@@ -231,22 +245,20 @@ class XinjeMQTTHandler {
   }
 
   /**
-   * Manejar datos publicados por el HMI
-   * Estructura esperada: { Pub_Data: { Nombre_Dispositivo: { cantidad_productos: X, temperatura: Y } } }
+   * Manejar datos publicados por el HMI (formato antiguo V1.0)
    */
   handleDataPublish(deviceId, payload) {
     console.log(`[MQTT] Datos recibidos de ${deviceId} a las ${new Date().toISOString()}`);
     
     if (payload.Pub_Data) {
       const pubData = payload.Pub_Data;
-      const deviceName = Object.keys(pubData)[0]; // Obtener el nombre del dispositivo único
+      const deviceName = Object.keys(pubData)[0];
       
       if (!deviceName) return;
       
       const deviceData = pubData[deviceName];
       const timestamp = parseInt(payload.Unix) || Date.now();
       
-      // Procesar solo las variables de interés: cantidad_productos y temperatura
       const varsToProcess = ['cantidad_productos', 'temperatura'];
       
       varsToProcess.forEach(key => {
@@ -255,7 +267,6 @@ class XinjeMQTTHandler {
           const cacheKey = `${deviceId}:${key}`;
           const previousValue = this.valueCache.get(cacheKey);
           
-          // Solo guardar si el valor cambió
           if (previousValue !== value) {
             saveData({
               deviceId: deviceId,
@@ -266,13 +277,64 @@ class XinjeMQTTHandler {
               version: payload.Version
             });
             
-            // Actualizar cache
             this.valueCache.set(cacheKey, value);
             console.log(`[DB] Guardado: ${key} = ${value} (anterior: ${previousValue})`);
           }
         }
       });
     }
+  }
+
+  /**
+   * Manejar telemetría continua (V2.0 message_type: telemetry)
+   * Procesa todas las claves con prefijo telemetry_* del Pub_Data
+   */
+  handleTelemetry(deviceId, payload) {
+    if (!payload.Pub_Data) return;
+
+    const deviceName = Object.keys(payload.Pub_Data)[0];
+    if (!deviceName) return;
+
+    const deviceData  = payload.Pub_Data[deviceName];
+    const timestamp   = parseInt(payload.Unix) || Date.now();
+
+    const telemetryKeys = Object.keys(deviceData).filter(k => k.startsWith('telemetry_'));
+
+    telemetryKeys.forEach(key => {
+      const value     = deviceData[key];
+      const cacheKey  = `${deviceId}:${key}`;
+      const prevValue = this.valueCache.get(cacheKey);
+
+      if (prevValue !== value) {
+        // El tag_name guardado en BD es la clave tal como viene (telemetry_*)
+        saveData({
+          deviceId:   deviceId,
+          deviceName: String(deviceId),
+          key:        key,
+          value:      typeof value === 'boolean' ? (value ? 1 : 0) : value,
+          timestamp:  timestamp,
+          version:    payload.Version
+        });
+        this.valueCache.set(cacheKey, value);
+      }
+    });
+
+    console.log(`[TELEMETRY] ${deviceId} | ${telemetryKeys.length} vars | t=${new Date(timestamp).toISOString()}`);
+  }
+
+  /**
+   * Manejar eventos de configuración / auditoría (V2.0 message_type: event)
+   * Persistir en machine_events con los campos event_* del payload
+   */
+  handleEvent(deviceId, payload) {
+    saveMachineEvent(deviceId, {
+      unix_ts:    parseInt(payload.Unix) || Date.now(),
+      event_type: payload.event_type,
+      parameter:  payload.parameter,   // ya viene con prefijo event_
+      old_value:  payload.old_value,
+      new_value:  payload.new_value,
+      details:    payload.details
+    });
   }
 
   /**

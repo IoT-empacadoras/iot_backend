@@ -29,6 +29,7 @@ const {
   getAggregated5min,
   getAggregated10min,
   getAggregated1hour,
+  getMachineEvents,
   startAggregationJobs,
   stopAggregationJobs
 } = require('./database');
@@ -556,6 +557,68 @@ app.get('/api/devices/:deviceId/history/1hour', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/devices/:deviceId/events
+ * Historial de eventos de configuración y auditoría de una máquina
+ * Query params:
+ *   - event_type : filtrar por tipo (STATE_CHANGE, SETPOINT_CHANGE, ALARM_TRIGGER, ...)
+ *   - parameter  : filtrar por variable (event_sp_temp_mordaza_H, ...)
+ *   - startTime  : timestamp epoch ms inicial
+ *   - endTime    : timestamp epoch ms final
+ *   - limit      : máx registros (default 200, máx 1000)
+ */
+app.get('/api/devices/:deviceId/events', async (req, res) => {
+  try {
+    const { deviceId } = req.params;
+    const { event_type, parameter, startTime, endTime, limit } = req.query;
+
+    const data = await getMachineEvents(deviceId, {
+      event_type,
+      parameter,
+      startTime: startTime ? parseInt(startTime) : undefined,
+      endTime:   endTime   ? parseInt(endTime)   : undefined,
+      limit:     limit     ? parseInt(limit)      : 200
+    });
+
+    res.json({
+      deviceId,
+      count: data.length,
+      events: data
+    });
+  } catch (error) {
+    console.error('[ERROR] /api/devices/:deviceId/events:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/devices/:deviceId/events/summary
+ * Último valor conocido de cada parámetro de configuración
+ */
+app.get('/api/devices/:deviceId/events/summary', async (req, res) => {
+  try {
+    const { deviceId } = req.params;
+
+    // Obtener el evento más reciente de cada parámetro
+    const all = await getMachineEvents(deviceId, { limit: 1000 });
+    const latest = {};
+    for (const ev of all) {
+      if (!latest[ev.parameter]) {
+        latest[ev.parameter] = ev; // ya viene ordenado DESC
+      }
+    }
+
+    res.json({
+      deviceId,
+      count: Object.keys(latest).length,
+      summary: latest
+    });
+  } catch (error) {
+    console.error('[ERROR] /api/devices/:deviceId/events/summary:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ========================================
 // WEBSOCKET
 // ========================================
@@ -643,6 +706,8 @@ async function startServer() {
       console.log('   GET  /api/devices/:id/history/5min');
       console.log('   GET  /api/devices/:id/history/10min');
       console.log('   GET  /api/devices/:id/history/1hour');
+      console.log('   GET  /api/devices/:id/events               <- NUEVO');
+      console.log('   GET  /api/devices/:id/events/summary       <- NUEVO');
       console.log('   POST /api/devices/:id/command');
       console.log('='.repeat(60));
       console.log('');

@@ -157,6 +157,28 @@ async function initDatabase() {
 
     await pool.query('CREATE INDEX IF NOT EXISTS idx_device_timestamp ON command_history (device_id, timestamp)');
 
+    // ── NUEVA: tabla de eventos de configuración / auditoría ──────────────────
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS machine_events (
+        event_id      SERIAL PRIMARY KEY,
+        device_id     INT NOT NULL REFERENCES devices(device_id) ON DELETE CASCADE,
+        received_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        unix_ts       BIGINT,
+        event_type    VARCHAR(30) NOT NULL,
+        parameter     VARCHAR(60) NOT NULL,
+        old_value     DOUBLE PRECISION,
+        new_value     DOUBLE PRECISION,
+        old_bool      BOOLEAN,
+        new_bool      BOOLEAN,
+        details       TEXT
+      )
+    `);
+
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_me_device_ts   ON machine_events (device_id, received_at DESC)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_me_event_type  ON machine_events (event_type)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_me_parameter   ON machine_events (parameter)');
+    // ─────────────────────────────────────────────────────────────────────────
+
     console.log('[DB] Esquema de base de datos inicializado');
   } catch (error) {
     console.error('[ERROR] Error inicializando esquema:', error.message);
@@ -286,6 +308,96 @@ async function saveConfig(deviceId, config) {
     }
   } catch (error) {
     console.error('[ERROR] Error guardando configuración:', error.message);
+  }
+}
+
+/**
+ * Persiste un evento de configuración / auditoría en machine_events.
+ * @param {string} deviceRef  - deviceId string (nombre o ID)
+ * @param {object} evt        - { unix_ts, event_type, parameter, old_value, new_value, details }
+ */
+async function saveMachineEvent(deviceRef, evt) {
+  try {
+    let dbDeviceId = await resolveDeviceId(deviceRef);
+    if (!dbDeviceId) {
+      dbDeviceId = await saveOrUpdateDevice(deviceRef, String(deviceRef), 'HMI');
+    }
+
+    // Determinar si los valores son numéricos o booleanos
+    const isBool = (v) => typeof v === 'boolean';
+    const toNum  = (v) => (typeof v === 'number' ? v : null);
+
+    const oldBool = isBool(evt.old_value) ? evt.old_value : null;
+    const newBool = isBool(evt.new_value) ? evt.new_value : null;
+    const oldNum  = !isBool(evt.old_value) ? toNum(parseFloat(evt.old_value)) : null;
+    const newNum  = !isBool(evt.new_value) ? toNum(parseFloat(evt.new_value)) : null;
+
+    await pool.query(
+      `INSERT INTO machine_events
+         (device_id, unix_ts, event_type, parameter, old_value, new_value, old_bool, new_bool, details)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [dbDeviceId, evt.unix_ts || null, evt.event_type, evt.parameter,
+       oldNum, newNum, oldBool, newBool, evt.details || null]
+    );
+
+    console.log(`[DB] Evento guardado: ${evt.event_type} | ${evt.parameter} | ${evt.old_value} → ${evt.new_value}`);
+  } catch (error) {
+    console.error('[ERROR] saveMachineEvent:', error.message);
+  }
+}
+
+/**
+ * Consulta eventos de una máquina con filtros opcionales.
+ * @param {string} deviceRef
+ * @param {object} opts - { event_type, parameter, startTime, endTime, limit }
+ */
+async function getMachineEvents(deviceRef, opts = {}) {
+  try {
+    const resolvedId = await resolveDeviceId(deviceRef);
+    if (!resolvedId) return [];
+
+    const params = [resolvedId];
+    let where = 'WHERE me.device_id = $1';
+
+    if (opts.event_type) {
+      params.push(opts.event_type);
+      where += ` AND me.event_type = $${params.length}`;
+    }
+    if (opts.parameter) {
+      params.push(opts.parameter);
+      where += ` AND me.parameter = $${params.length}`;
+    }
+    if (opts.startTime) {
+      params.push(new Date(parseInt(opts.startTime)));
+      where += ` AND me.received_at >= $${params.length}`;
+    }
+    if (opts.endTime) {
+      params.push(new Date(parseInt(opts.endTime)));
+      where += ` AND me.received_at <= $${params.length}`;
+    }
+
+    const limit = Math.min(parseInt(opts.limit) || 200, 1000);
+    params.push(limit);
+
+    const { rows } = await pool.query(
+      `SELECT me.event_id, me.received_at, me.unix_ts,
+              me.event_type, me.parameter,
+              me.old_value, me.new_value,
+              me.old_bool,  me.new_bool,
+              me.details,
+              d.device_name
+       FROM machine_events me
+       JOIN devices d ON d.device_id = me.device_id
+       ${where}
+       ORDER BY me.received_at DESC
+       LIMIT $${params.length}`,
+      params
+    );
+
+    return rows;
+  } catch (error) {
+    console.error('[ERROR] getMachineEvents:', error.message);
+    return [];
   }
 }
 
@@ -797,6 +909,8 @@ module.exports = {
   initDatabase,
   saveData,
   saveConfig,
+  saveMachineEvent,
+  getMachineEvents,
   getLatestData,
   getLatestByKey,
   getHistoricalData,
