@@ -136,14 +136,33 @@ app.get('/api/stats', async (req, res) => {
  */
 app.get('/api/devices', async (req, res) => {
   try {
+    const HEALTH_WINDOW_MS = 60 * 1000;
+    const now = Date.now();
+
     const mqttDevicesRaw = mqttHandler.getConnectedDevices();
     const dbDevicesRaw = await getDevices();
     const mqttDevices = Array.isArray(mqttDevicesRaw) ? mqttDevicesRaw : [];
     const dbDevices = Array.isArray(dbDevicesRaw) ? dbDevicesRaw : [];
 
     const devices = await Promise.all(mqttDevices.map(async (mqttDev) => {
-      const dbDev = dbDevices.find(d => d.device_id === mqttDev.id);
+      const dbDev = dbDevices.find((d) => (
+        String(d.device_name) === String(mqttDev.id)
+        || String(d.device_id) === String(mqttDev.id)
+      ));
       const latestByKey = await getLatestByKey(mqttDev.id);
+
+      const getTopicAge = (topicName) => {
+        const rawTs = mqttDev?.topics?.[topicName]?.lastUpdate;
+        if (!rawTs) return Number.POSITIVE_INFINITY;
+        const ts = rawTs instanceof Date ? rawTs.getTime() : new Date(rawTs).getTime();
+        if (Number.isNaN(ts)) return Number.POSITIVE_INFINITY;
+        return now - ts;
+      };
+
+      const runningTopics = ['events', 'pub_data', 'pub_configlist', 'write_reply'];
+      const hasRunningActivity = runningTopics.some((topicName) => getTopicAge(topicName) <= HEALTH_WINDOW_MS);
+      const hasCommandActivity = getTopicAge('write_data') <= HEALTH_WINDOW_MS;
+      const shouldExposeHealth = hasRunningActivity || hasCommandActivity;
 
       let lastData = {};
 
@@ -161,6 +180,17 @@ app.get('/api/devices', async (req, res) => {
       return {
         ...mqttDev,
         ...dbDev,
+        ...(shouldExposeHealth ? {
+          health: {
+            status: 'healthy',
+            source: hasRunningActivity && hasCommandActivity
+              ? 'runtime_and_commands'
+              : hasRunningActivity
+                ? 'runtime'
+                : 'commands',
+            windowMs: HEALTH_WINDOW_MS
+          }
+        } : {}),
         lastData: lastData,
         topics: {
           ...mqttDev.topics,

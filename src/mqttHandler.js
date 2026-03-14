@@ -132,6 +132,7 @@ class XinjeMQTTHandler {
           console.error(`[ERROR] Error solicitando access_data a ${deviceId}:`, err);
           reject(err);
         } else {
+          this.updateDeviceCache(deviceId, 'access_data', payload);
           console.log(`[MQTT] Solicitud access_data enviada a ${deviceId}`);
           resolve();
         }
@@ -371,6 +372,11 @@ class XinjeMQTTHandler {
    */
   sendCommand(deviceId, commandData) {
     return new Promise((resolve, reject) => {
+      if (!this.client) {
+        reject(new Error('Cliente MQTT no inicializado'));
+        return;
+      }
+
       const topic = `${deviceId}/write_data`;
       
       const payload = {
@@ -386,6 +392,7 @@ class XinjeMQTTHandler {
           console.error(`[ERROR] Error enviando comando a ${deviceId}:`, err);
           reject(err);
         } else {
+          this.updateDeviceCache(deviceId, 'write_data', payload);
           console.log(`[MQTT] Comando enviado a ${deviceId}`);
           resolve();
         }
