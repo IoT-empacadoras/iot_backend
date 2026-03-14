@@ -161,7 +161,10 @@ app.get('/api/devices', async (req, res) => {
 
       const runningTopics = ['events', 'pub_data', 'pub_configlist', 'write_reply'];
       const hasRunningActivity = runningTopics.some((topicName) => getTopicAge(topicName) <= HEALTH_WINDOW_MS);
-      const hasCommandActivity = getTopicAge('write_data') <= HEALTH_WINDOW_MS;
+      const hasCommandActivity = (
+        getTopicAge('write_data') <= HEALTH_WINDOW_MS
+        || getTopicAge('access_data') <= HEALTH_WINDOW_MS
+      );
       const shouldExposeHealth = hasRunningActivity || hasCommandActivity;
 
       let lastData = {};

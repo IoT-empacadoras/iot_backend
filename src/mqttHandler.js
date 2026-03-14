@@ -40,6 +40,7 @@ class XinjeMQTTHandler {
     this.deviceCache = new Map(); // Cache de dispositivos conectados
     this.valueCache = new Map(); // Cache para detectar cambios en valores
     this.targetDeviceIds = Array.from(new Set(parsedDeviceIds));
+    this.healthWindowMs = parseInt(process.env.DEVICE_HEALTH_WINDOW_MS || '60000', 10);
     this.isConnected = false;
   }
 
@@ -423,6 +424,38 @@ class XinjeMQTTHandler {
     });
   }
 
+  buildDeviceHealth(topics, nowTs) {
+    const getTopicAge = (topicName) => {
+      const rawTs = topics?.[topicName]?.lastUpdate;
+      if (!rawTs) return Number.POSITIVE_INFINITY;
+      const ts = rawTs instanceof Date ? rawTs.getTime() : new Date(rawTs).getTime();
+      if (Number.isNaN(ts)) return Number.POSITIVE_INFINITY;
+      return nowTs - ts;
+    };
+
+    const runningTopics = ['events', 'pub_data', 'pub_configlist', 'write_reply'];
+    const hasRunningActivity = runningTopics.some((topicName) => getTopicAge(topicName) <= this.healthWindowMs);
+    const hasCommandActivity = getTopicAge('write_data') <= this.healthWindowMs;
+    const hasAccessActivity = getTopicAge('access_data') <= this.healthWindowMs;
+
+    if (!hasRunningActivity && !hasCommandActivity && !hasAccessActivity) {
+      return null;
+    }
+
+    let source = 'runtime';
+    if (hasRunningActivity && (hasCommandActivity || hasAccessActivity)) {
+      source = 'runtime_and_commands';
+    } else if (hasCommandActivity || hasAccessActivity) {
+      source = 'commands';
+    }
+
+    return {
+      status: 'healthy',
+      source,
+      windowMs: this.healthWindowMs
+    };
+  }
+
   /**
    * Obtener lista de dispositivos conectados
    */
@@ -433,11 +466,13 @@ class XinjeMQTTHandler {
 
     this.deviceCache.forEach((device, deviceId) => {
       const timeSinceLastSeen = now - device.lastSeen.getTime();
-      
+      const health = this.buildDeviceHealth(device.topics, now);
+
       devices.push({
         ...device,
         status: timeSinceLastSeen < TIMEOUT ? 'online' : 'offline',
-        lastSeenAgo: timeSinceLastSeen
+        lastSeenAgo: timeSinceLastSeen,
+        ...(health ? { health } : {})
       });
     });
 
