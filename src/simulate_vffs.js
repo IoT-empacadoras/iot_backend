@@ -29,7 +29,9 @@ const mqtt = require('mqtt');
 // ============================================================
 
 const BROKER_URL = process.env.MQTT_BROKER || 'mqtt://broker.hivemq.com:1883';
-const DEVICE_ID  = process.env.DEVICE_ID   || '441095104B78F267112345678';
+//const DEVICE_ID  = process.env.DEVICE_ID   || '441095104B78F267112345678';
+
+const DEVICE_ID  = process.env.DEVICE_ID   || '441095104B78F267112343457'; // ID de dispositivo simulado (debe coincidir con el configurado en HMI)
 
 const TOPIC = `${DEVICE_ID}/events`; // único tópico permitido por el HMI
 

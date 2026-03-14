@@ -16,6 +16,15 @@ const { saveData, saveConfig, saveMachineEvent } = require('./database');
 
 class XinjeMQTTHandler {
   constructor(brokerUrl, options = {}) {
+    const configuredDeviceIds = options.deviceIds
+      || process.env.MQTT_DEVICE_IDS
+      || '441095104B78F267112345678,441095104B78F267112343457';
+
+    const parsedDeviceIds = String(configuredDeviceIds)
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+
     this.brokerUrl = brokerUrl;
     this.options = {
       clientId: options.clientId || 'xinje_backend_' + Math.random().toString(16).substr(2, 8),
@@ -30,6 +39,7 @@ class XinjeMQTTHandler {
     this.subscribers = [];
     this.deviceCache = new Map(); // Cache de dispositivos conectados
     this.valueCache = new Map(); // Cache para detectar cambios en valores
+    this.targetDeviceIds = Array.from(new Set(parsedDeviceIds));
     this.isConnected = false;
   }
 
@@ -76,11 +86,21 @@ class XinjeMQTTHandler {
    */
 
   subscribeToXinjeTopics() {
-    const targetDeviceId = '441095104B78F267112345678';
-    const topics = [
-      `${targetDeviceId}/events`,       // único tópico: telemetría + eventos
-      `${targetDeviceId}/write_reply`   // respuestas a comandos
-    ];
+    const topics = [];
+
+    if (this.targetDeviceIds.length > 0) {
+      this.targetDeviceIds.forEach((deviceId) => {
+        topics.push(`${deviceId}/events`);       // único tópico: telemetría + eventos
+        topics.push(`${deviceId}/write_reply`);  // respuestas a comandos
+      });
+    } else {
+      // Fallback: escuchar cualquier ID si no se configuró lista.
+      topics.push('+/events');
+      topics.push('+/write_reply');
+    }
+
+    console.log(`[MQTT] IDs objetivo: ${this.targetDeviceIds.length > 0 ? this.targetDeviceIds.join(', ') : 'ALL (+/...)'}`);
+
     topics.forEach(topic => {
       this.client.subscribe(topic, { qos: 2 }, (err) => {
         if (err) {

@@ -66,6 +66,7 @@
 - `DB_SSL=true`
 - `DB_SSL_REJECT_UNAUTHORIZED=false`
 - `MQTT_BROKER` (ejemplo: `mqtt://broker.hivemq.com:1883`)
+- `MQTT_DEVICE_IDS` (lista separada por coma de IDs a suscribir, ej: `441095104B78F267112345678,441095104B78F267112343457`)
 - `CORS_ORIGIN` (dominio del frontend)
 
 ### Nota de enlace entre servicios en Render
