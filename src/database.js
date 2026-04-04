@@ -75,10 +75,12 @@ async function initDatabase() {
         engineering_unit VARCHAR(20),
         description VARCHAR(255),
         created_at TIMESTAMPTZ DEFAULT NOW(),
+        is_active BOOLEAN DEFAULT TRUE,
         UNIQUE (device_id, tag_name)
       )
     `);
 
+    await pool.query('ALTER TABLE sensors ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_tag_name ON sensors (tag_name)');
 
     await pool.query(`
@@ -446,7 +448,7 @@ async function getLatestByKey(deviceId) {
           ORDER BY timestamp DESC
           LIMIT 1
         ) sh ON true
-        WHERE s.device_id = $1
+        WHERE s.device_id = $1 AND s.is_active = TRUE
         ORDER BY s.tag_name ASC
       `,
       [resolvedId]
@@ -616,7 +618,7 @@ async function getSensors(deviceId) {
     const { rows } = await pool.query(
       `
         SELECT * FROM sensors
-        WHERE device_id = $1
+        WHERE device_id = $1 AND is_active = TRUE
         ORDER BY tag_name ASC
       `,
       [resolvedId]
