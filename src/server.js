@@ -174,7 +174,11 @@ app.get('/api/devices', async (req, res) => {
         getTopicAge('write_data') <= HEALTH_WINDOW_MS
         || getTopicAge('access_data') <= HEALTH_WINDOW_MS
       );
-      const shouldExposeHealth = hasRunningActivity || hasCommandActivity;
+      const dbLastSeenTs = dbDev?.last_seen ? new Date(dbDev.last_seen).getTime() : Number.NaN;
+      const hasRecentDbSeen = !Number.isNaN(dbLastSeenTs) && (now - dbLastSeenTs) <= HEALTH_WINDOW_MS;
+      const hasDbOnlineStatus = String(dbDev?.status || '').toLowerCase() === 'online';
+
+      const shouldExposeHealth = hasRunningActivity || hasCommandActivity || hasRecentDbSeen || hasDbOnlineStatus;
 
       let lastData = {};
 
@@ -199,7 +203,11 @@ app.get('/api/devices', async (req, res) => {
               ? 'runtime_and_commands'
               : hasRunningActivity
                 ? 'runtime'
-                : 'commands',
+                : hasCommandActivity
+                  ? 'commands'
+                  : hasRecentDbSeen
+                    ? 'db_last_seen'
+                    : 'db_status',
             windowMs: HEALTH_WINDOW_MS
           }
         } : {}),
