@@ -144,7 +144,14 @@ app.get('/api/devices', async (req, res) => {
     const mqttDevices = Array.isArray(mqttDevicesRaw) ? mqttDevicesRaw : [];
     const dbDevices = Array.isArray(dbDevicesRaw) ? dbDevicesRaw : [];
 
-    const devices = await Promise.all(mqttDevices.map(async (mqttDev) => {
+    // Combinar dispositivos MQTT y de BD para que los creados sin mensajes aún aparezcan
+    const allIds = new Set([...mqttDevices.map(d => d.id), ...dbDevices.map(d => String(d.device_name))]);
+    const unifiedDevices = Array.from(allIds).map(id => {
+      const mqttDev = mqttDevices.find(d => d.id === id) || { id, topics: {} };
+      return mqttDev;
+    });
+
+    const devices = await Promise.all(unifiedDevices.map(async (mqttDev) => {
       const dbDev = dbDevices.find((d) => (
         String(d.device_name) === String(mqttDev.id)
         || String(d.device_id) === String(mqttDev.id)
