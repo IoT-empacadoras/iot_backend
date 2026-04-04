@@ -740,6 +740,39 @@ async function cleanOldData(daysToKeep = 30) {
   }
 }
 
+async function refreshDevicesOnlineStatus(inactiveAfterMinutes = 5) {
+  try {
+    await pool.query(
+      `
+        UPDATE devices
+        SET status = CASE
+          WHEN last_seen >= NOW() - ($1::int * INTERVAL '1 minute') THEN 'online'
+          ELSE 'offline'
+        END
+      `,
+      [inactiveAfterMinutes]
+    );
+
+    const { rows } = await pool.query(
+      `
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'online')::int AS online,
+          COUNT(*) FILTER (WHERE status = 'offline')::int AS offline
+        FROM devices
+      `
+    );
+
+    return {
+      online: rows[0]?.online || 0,
+      offline: rows[0]?.offline || 0,
+      windowMinutes: inactiveAfterMinutes
+    };
+  } catch (error) {
+    console.error('[ERROR] Error refrescando estado de dispositivos:', error.message);
+    throw error;
+  }
+}
+
 async function getAggregated1min(deviceId, limit = 100) {
   try {
     const resolvedId = await resolveDeviceId(deviceId);
@@ -977,6 +1010,7 @@ module.exports = {
   saveCommand,
   getStats,
   cleanOldData,
+  refreshDevicesOnlineStatus,
   saveOrUpdateDevice,
   getOrCreateSensor,
   getAggregated1min,

@@ -1,5 +1,8 @@
 # Integración MQTT HMI TS5 (Xinje TouchWin Pro)
 
+## Documentacion API REST
+- Ver detalle completo en `API_ENDPOINTS.md`.
+
 ## Parámetros de Conexión
 - **Broker:** broker.hivemq.com
 - **Puerto:** 1883 (sin TLS)

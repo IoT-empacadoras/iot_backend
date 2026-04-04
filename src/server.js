@@ -25,6 +25,7 @@ const {
   setActiveSensors,
   activatePpmProfile,
   getStats,
+  refreshDevicesOnlineStatus,
   saveCommand,
   saveOrUpdateDevice,
   getAggregated1min,
@@ -44,6 +45,8 @@ const PORT = process.env.PORT || 3000;
 // Por defecto usar broker público de HiveMQ si no se define otro
 const MQTT_BROKER = process.env.MQTT_BROKER || 'mqtt://broker.hivemq.com:1883';
 const ENABLE_APP_AGGREGATION_JOBS = process.env.ENABLE_APP_AGGREGATION_JOBS !== 'false';
+const DEVICE_STATUS_WINDOW_MINUTES = parseInt(process.env.DEVICE_STATUS_WINDOW_MINUTES || '5', 10);
+const DEVICE_STATUS_SYNC_INTERVAL_MS = parseInt(process.env.DEVICE_STATUS_SYNC_INTERVAL_MS || '300000', 10);
 
 const app = express();
 const server = http.createServer(app);
@@ -176,9 +179,7 @@ app.get('/api/devices', async (req, res) => {
       );
       const dbLastSeenTs = dbDev?.last_seen ? new Date(dbDev.last_seen).getTime() : Number.NaN;
       const hasRecentDbSeen = !Number.isNaN(dbLastSeenTs) && (now - dbLastSeenTs) <= HEALTH_WINDOW_MS;
-      const hasDbOnlineStatus = String(dbDev?.status || '').toLowerCase() === 'online';
-
-      const shouldExposeHealth = hasRunningActivity || hasCommandActivity || hasRecentDbSeen || hasDbOnlineStatus;
+      const shouldExposeHealth = hasRunningActivity || hasCommandActivity || hasRecentDbSeen;
 
       let lastData = {};
 
@@ -205,9 +206,7 @@ app.get('/api/devices', async (req, res) => {
                 ? 'runtime'
                 : hasCommandActivity
                   ? 'commands'
-                  : hasRecentDbSeen
-                    ? 'db_last_seen'
-                    : 'db_status',
+                  : 'db_last_seen',
             windowMs: HEALTH_WINDOW_MS
           }
         } : {}),
@@ -788,7 +787,17 @@ async function startServer() {
     console.log('[DB] Inicializando conexión a PostgreSQL...');
     await initConnectionPool();
     await initDatabase();
+    await refreshDevicesOnlineStatus(DEVICE_STATUS_WINDOW_MINUTES);
     console.log('[DB] PostgreSQL inicializado correctamente');
+
+    setInterval(async () => {
+      try {
+        const summary = await refreshDevicesOnlineStatus(DEVICE_STATUS_WINDOW_MINUTES);
+        console.log(`[DB] Sync status dispositivos -> online: ${summary.online}, offline: ${summary.offline}`);
+      } catch (error) {
+        console.error('[ERROR] Fallo en sync de estado de dispositivos:', error.message);
+      }
+    }, DEVICE_STATUS_SYNC_INTERVAL_MS);
 
     if (ENABLE_APP_AGGREGATION_JOBS) {
       startAggregationJobs();
