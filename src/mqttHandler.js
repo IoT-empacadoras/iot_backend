@@ -114,6 +114,33 @@ class XinjeMQTTHandler {
   }
 
   /**
+   * Suscribirse a un nuevo dispositivo dinámicamente
+   */
+  addDeviceSubscription(deviceId) {
+    if (!this.targetDeviceIds.includes(deviceId)) {
+      this.targetDeviceIds.push(deviceId);
+      console.log(`[MQTT] Agregado nuevo dispositivo dinamicamente: ${deviceId}`);
+      
+      if (this.isConnected) {
+        const topics = [
+          `${deviceId}/events`,
+          `${deviceId}/write_reply`
+        ];
+        
+        topics.forEach(topic => {
+          this.client.subscribe(topic, { qos: 2 }, (err) => {
+            if (err) {
+              console.error(`[ERROR] Error al suscribirse al nuevo topic ${topic}:`, err);
+            } else {
+              console.log(`[MQTT] Suscrito a nuevo topic dinámico: ${topic} (QoS 2)`);
+            }
+          });
+        });
+      }
+    }
+  }
+
+  /**
    * Consultar datos históricos o guardados (access_data)
    * Topic: ID+PWD/access_data
    * @param {string} deviceId

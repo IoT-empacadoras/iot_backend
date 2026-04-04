@@ -219,6 +219,28 @@ app.get('/api/devices', async (req, res) => {
 });
 
 /**
+ * POST /api/devices
+ * Agrega un nuevo dispositivo al que el backend se suscribirá dinámicamente
+ */
+app.post('/api/devices', async (req, res) => {
+  try {
+    const { deviceId } = req.body;
+    if (!deviceId) return res.status(400).json({ error: 'deviceId requerido' });
+    
+    if (mqttHandler) {
+      mqttHandler.addDeviceSubscription(deviceId);
+    }
+    
+    // Crear el dispositivo en la BD para que ya aparezca en la lista
+    await saveOrUpdateDevice(deviceId, String(deviceId), 'HMI');
+    
+    res.json({ success: true, deviceId });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
  * GET /api/devices/:deviceId/latest
  * Últimos valores de cada variable de un dispositivo
  */
