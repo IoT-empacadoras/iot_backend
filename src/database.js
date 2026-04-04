@@ -631,6 +631,59 @@ async function getSensors(deviceId) {
   }
 }
 
+async function setActiveSensors(deviceId, activeTags = []) {
+  try {
+    const resolvedId = await resolveDeviceId(deviceId);
+    if (!resolvedId) {
+      return { updated: 0, totalActive: 0, deviceId: null };
+    }
+
+    const normalizedTags = Array.from(new Set(
+      (Array.isArray(activeTags) ? activeTags : [])
+        .map((tag) => String(tag || '').trim())
+        .filter(Boolean)
+    ));
+
+    await pool.query(
+      'UPDATE sensors SET is_active = FALSE WHERE device_id = $1',
+      [resolvedId]
+    );
+
+    if (normalizedTags.length > 0) {
+      await pool.query(
+        `
+          UPDATE sensors
+          SET is_active = TRUE
+          WHERE device_id = $1
+            AND tag_name = ANY($2::text[])
+        `,
+        [resolvedId, normalizedTags]
+      );
+    }
+
+    const { rows } = await pool.query(
+      'SELECT COUNT(*)::int AS total_active FROM sensors WHERE device_id = $1 AND is_active = TRUE',
+      [resolvedId]
+    );
+
+    return {
+      updated: normalizedTags.length,
+      totalActive: rows[0]?.total_active || 0,
+      deviceId: resolvedId
+    };
+  } catch (error) {
+    console.error('[ERROR] Error actualizando sensores activos:', error.message);
+    throw error;
+  }
+}
+
+async function activatePpmProfile(deviceId) {
+  return setActiveSensors(deviceId, [
+    'telemetry_pv_ppm',
+    'telemetry_sp_velocidad_ppm'
+  ]);
+}
+
 async function saveCommand(deviceId, command) {
   try {
     let resolvedId = await resolveDeviceId(deviceId);
@@ -919,6 +972,8 @@ module.exports = {
   getHistoricalDataPaginated,
   getDevices,
   getSensors,
+  setActiveSensors,
+  activatePpmProfile,
   saveCommand,
   getStats,
   cleanOldData,

@@ -22,6 +22,8 @@ const {
   getHistoricalDataPaginated, 
   getDevices,
   getSensors,
+  setActiveSensors,
+  activatePpmProfile,
   getStats,
   saveCommand,
   saveOrUpdateDevice,
@@ -293,6 +295,54 @@ app.get('/api/devices/:deviceId/sensors', async (req, res) => {
     });
   } catch (error) {
     console.error('[ERROR] Error en /api/devices/:deviceId/sensors:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * PUT /api/devices/:deviceId/sensors/active
+ * Define explícitamente qué tags quedan activos para el dispositivo
+ * body: { tags: string[] }
+ */
+app.put('/api/devices/:deviceId/sensors/active', async (req, res) => {
+  try {
+    const { deviceId } = req.params;
+    const { tags } = req.body || {};
+
+    if (!Array.isArray(tags)) {
+      return res.status(400).json({ error: 'El campo tags debe ser un arreglo de strings' });
+    }
+
+    const result = await setActiveSensors(deviceId, tags);
+    res.json({
+      deviceId,
+      activeTags: tags,
+      updated: result.updated,
+      totalActive: result.totalActive
+    });
+  } catch (error) {
+    console.error('[ERROR] Error en /api/devices/:deviceId/sensors/active:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/devices/:deviceId/sensors/active-profile/ppm
+ * Activa sólo telemetry_pv_ppm y telemetry_sp_velocidad_ppm
+ */
+app.post('/api/devices/:deviceId/sensors/active-profile/ppm', async (req, res) => {
+  try {
+    const { deviceId } = req.params;
+    const result = await activatePpmProfile(deviceId);
+
+    res.json({
+      deviceId,
+      activeTags: ['telemetry_pv_ppm', 'telemetry_sp_velocidad_ppm'],
+      updated: result.updated,
+      totalActive: result.totalActive
+    });
+  } catch (error) {
+    console.error('[ERROR] Error en /api/devices/:deviceId/sensors/active-profile/ppm:', error.message);
     res.status(500).json({ error: error.message });
   }
 });
