@@ -809,6 +809,17 @@ async function startServer() {
     // Intentar conectar a MQTT (no crítico si falla)
     try {
       await mqttHandler.connect();
+
+      // Suscribir automaticamente todos los dispositivos existentes en BD
+      // para evitar que queden "inactivos" por no estar en MQTT_DEVICE_IDS.
+      const knownDevices = await getDevices();
+      knownDevices.forEach((device) => {
+        const id = String(device.device_name || '').trim();
+        if (id) {
+          mqttHandler.addDeviceSubscription(id);
+        }
+      });
+
       console.log('[MQTT] Conectado correctamente');
     } catch (mqttError) {
       console.warn('[WARN] MQTT no disponible - El servidor funcionara sin comunicacion MQTT');
